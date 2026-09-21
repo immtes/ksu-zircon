@@ -21,14 +21,18 @@ jobs:
           ln -s ../ksun/kernel drivers/kernelsu
           grep -q kernelsu drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-      - name: config
+      - name: config (auto-fix missing Kconfigs)
         run: |
           cd kernel
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- zircon_defconfig
-          scripts/config --module CONFIG_KSU
-          scripts/config -e CONFIG_KPROBES
-          scripts/config -e CONFIG_HAVE_KPROBES
-          scripts/config -e CONFIG_KPROBE_EVENTS
+          for i in $(seq 1 60); do
+            if out=$(make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- zircon_defconfig 2>&1); then echo "$out" | tail -3; break; fi
+            miss=$(echo "$out" | grep -oE "can't open file \"[^\"]+\"" | head -1 | sed -E 's/.*"([^"]+)"/\1/')
+            if [ -z "$miss" ]; then echo "$out" | tail -20; exit 1; fi
+            echo ">> dummy for $miss"
+            mkdir -p "$(dirname "$miss")"; echo '# dummy' > "$miss"
+          done
+          scripts/config --module CONFIG_KSU || scripts/config --enable CONFIG_KSU
+          scripts/config -e CONFIG_KPROBES -e CONFIG_HAVE_KPROBES -e CONFIG_KPROBE_EVENTS
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
       - name: build module
