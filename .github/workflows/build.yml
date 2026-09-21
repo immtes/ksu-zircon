@@ -1,0 +1,43 @@
+name: Build KernelSU-Next LKM (zircon)
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libelf-dev libssl-dev gcc make bison flex bc crossbuild-essential-arm64
+      - name: clone kernel (zircon, Android 13)
+        run: git clone --depth=1 -b zircon-t-oss https://github.com/MiCode/Xiaomi_Kernel_OpenSource kernel
+      - name: clone KernelSU-Next
+        run: git clone --depth=1 -b v3.4.0 https://github.com/KernelSU-Next/KernelSU-Next ksun
+      - name: integrate as LKM
+        run: |
+          cd kernel
+          rm -rf drivers/kernelsu
+          ln -s ../ksun/kernel drivers/kernelsu
+          grep -q kernelsu drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+      - name: config
+        run: |
+          cd kernel
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- zircon_defconfig
+          scripts/config --module CONFIG_KSU
+          scripts/config -e CONFIG_KPROBES
+          scripts/config -e CONFIG_HAVE_KPROBES
+          scripts/config -e CONFIG_KPROBE_EVENTS
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
+      - name: build module
+        run: |
+          cd kernel
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- M=drivers/kernelsu -j$(nproc)
+      - name: show result
+        run: find kernel/drivers/kernelsu -name '*.ko' -exec ls -la {} \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ksun-lkm
+          path: kernel/drivers/kernelsu/*.ko
